@@ -1,5 +1,10 @@
 @symbolic_wrap struct Num <: Real
-    val::Any
+    val::BasicSymbolic{VartypeT}
+
+    function Num(ex)
+        @assert symtype(ex) <: Real
+        return new(Const{VartypeT}(ex))
+    end
 end
 
 const RCNum = Union{Num, Complex{Num}}

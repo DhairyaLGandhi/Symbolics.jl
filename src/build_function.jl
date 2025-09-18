@@ -171,6 +171,9 @@ function _build_function(target::JuliaTarget, op::Union{Arr, SymbolicUtils.Basic
 
     outsym = DEFAULT_OUTSYM
     if iip_config[2]
+        if SymbolicUtils.isarrayop(op) && !haskey(states.rewrites, :arrayop_output)
+            states.rewrites[:arrayop_output] = outsym
+        end
         body = inplace_expr(op, outsym)
         iip_expr = wrap_code[2](Func(vcat(outsym, dargs), [], body))
     else

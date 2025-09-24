@@ -148,7 +148,8 @@ function inplace_builtin(term, outsym)
 end
 
 hasnode(r::Function, y::Arr) = _hasnode(r, y)
-hasnode(r::Union{Num, BasicSymbolic, Arr}, y::Union{Arr, BasicSymbolic}) = occursin(unwrap(r), unwrap(y))
+hasnode(r::Union{Num, Arr}, y::Arr) = occursin(unwrap(r), unwrap(y))
+hasnode(r::Arr, y::BasicSymbolic) = occursin(unwrap(r), unwrap(y))
 
 #=
 """

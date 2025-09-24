@@ -1,5 +1,6 @@
 using Symbolics
 using LogExpFunctions
+using Test
 
 N = 10
 

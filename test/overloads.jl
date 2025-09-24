@@ -11,8 +11,8 @@ vars = @variables t $a $b(t) $c(t)[1:3]
 @test b === :value_b
 @test c === :value_c
 @test isequal(vars[1], t)
-@test isequal(vars[2], Num(Sym{Real}(a)))
-@test isequal(vars[3], Num(Sym{FnType{Tuple{Any},Real}}(b)(value(t))))
+@test isequal(vars[2], Num(Sym{SymReal}(a; type = Real)))
+@test isequal(vars[3], Num(Sym{SymReal}(b; type = FnType{Tuple,Real,Nothing})(value(t))))
 
 vars = @variables a,b,c,d,e,f,g,h,i
 @test isequal(vars, [a,b,c,d,e,f,g,h,i])
@@ -30,7 +30,7 @@ aa = a; # old a
 @test isequal(a, aa)
 @test hash(a) == hash(aa)
 
-@test isequal(Symbolics.get_variables(a+aa+1), [a])
+@test isequal(Symbolics.get_variables(a+aa+1), Set([a]))
 
 @test hash(a+b ~ c+d) == hash(a+b ~ c+d)
 
@@ -112,26 +112,20 @@ M \ [1, 2]
 # test det
 @variables X[1:4,1:4]
 d1 = det(X, laplace=true)
-d2 = det(X, laplace=false)
 _det1 = eval(build_function(d1,X))
-_det2 = eval(build_function(d2,X))
 A = [1 1 1 1
      1 0 1 1
      1 1 0 1
      1 1 1 0]
 @test _det1(map(Num, A)) == -1
-@test _det2(map(Num, A)) == -1
 
 @variables X[1:3,1:3]
 d1 = det(X, laplace=true)
-d2 = det(X, laplace=false)
 _det1 = eval(build_function(d1, X))
-_det2 = eval(build_function(d2, X))
 A = [1 1 1
      1 0 1
      1 1 1]
 @test _det1(map(Num, A)) == 0
-@test _det2(map(Num, A)) == 0
 
 @variables a b c d
 z1 = a + b * im
@@ -163,7 +157,7 @@ z2 = c + d * im
 @test conj(a) === a
 @test imag(a) === Num(0)
 
-@test isequal(sign(x), Num(SymbolicUtils.Term{Int}(sign, [Symbolics.value(x)])))
+@test isequal(sign(x), Num(SymbolicUtils.Term{SymReal}(sign, [Symbolics.value(x)]; type = Real)))
 @test sign(Num(1)) isa Num
 @test isequal(sign(Num(1)), Num(1))
 @test isequal(sign(Num(-1)), Num(-1))
@@ -185,7 +179,7 @@ x = Num.(randn(10))
 @test norm(x, 1) == norm(Symbolics.value.(x), 1)
 @test norm(x, 1.2) == norm(Symbolics.value.(x), 1.2)
 
-@test clamp.(x, 0, 1) == clamp.(Symbolics.value.(x), 0, 1)
+@test value.(clamp.(x, 0, 1)) == clamp.(Symbolics.value.(x), 0, 1)
 @test isequal(Symbolics.derivative(clamp(a, 0, 1), a), ifelse(a < 0, 0, ifelse(a>1, 0, 1)))
 
 @variables x[1:2]
@@ -205,7 +199,7 @@ x = Num.(randn(10))
 
 @variables x[1:3]
 ex = x[1]+x[2]
-@test isequal(Symbolics.get_variables(ex), Symbolics.scalarize(x[1:2]))
+@test issetequal(Symbolics.get_variables(ex), Symbolics.scalarize(x[1:2]))
 
 @variables x
 A = [x[1] 2

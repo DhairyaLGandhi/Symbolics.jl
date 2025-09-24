@@ -20,27 +20,27 @@ Y, = @variables y[ns]
 
 # https://en.wikipedia.org/wiki/Taylor_series#List_of_Maclaurin_series_of_some_common_functions
 @variables x
-@test taylor(exp(x), x, 0:9) - sum(x^n//factorial(n) for n in 0:9) == 0
-@test taylor(log(1-x), x, 0:9) - sum(-x^n/n for n in 1:9) == 0
-@test taylor(log(1+x), x, 0:9) - sum((-1)^(n+1)*x^n/n for n in 1:9) == 0
+@test expand(taylor(exp(x), x, 0:9) - sum(x^n/factorial(n) for n in 0:9)) == 0
+@test expand(taylor(log(1-x), x, 0:9) - sum(-x^n/n for n in 1:9)) == 0
+@test expand(taylor(log(1+x), x, 0:9) - sum((-1)^(n+1)*x^n/n for n in 1:9)) == 0
 
-@test taylor(1/(1-x), x, 0:9) - sum(x^n for n in 0:9) == 0
-@test taylor(1/(1-x)^2, x, 0:8) - sum(n * x^(n-1) for n in 1:9) == 0
-@test taylor(1/(1-x)^3, x, 0:7) - sum((n-1)*n*x^(n-2)/2 for n in 2:9) == 0
+@test expand(taylor(1/(1-x), x, 0:9) - sum(x^n for n in 0:9)) == 0
+@test expand(taylor(1/(1-x)^2, x, 0:8) - sum(n * x^(n-1) for n in 1:9)) == 0
+@test expand(taylor(1/(1-x)^3, x, 0:7) - sum((n-1)*n*x^(n-2)/2 for n in 2:9)) == 0
 for α in (-1//2, 0, 1//2, 1, 2, 3)
-    @test taylor((1+x)^α, x, 0:7) - sum(binomial(α, n)*x^n for n in 0:7) == 0
+    @test expand(taylor((1+x)^α, x, 0:7) - sum(binomial(α, n)*x^n for n in 0:7)) == 0
 end
 
-@test taylor(sin(x), x, 0:7) - sum((-1)^n/factorial(2*n+1) * x^(2*n+1) for n in 0:3) == 0
-@test taylor(cos(x), x, 0:7) - sum((-1)^n/factorial(2*n) * x^(2*n) for n in 0:3) == 0
-@test taylor(tan(x), x, 0:7) - taylor(taylor(sin(x), x, 0:7) / taylor(cos(x), x, 0:7), x, 0:7) == 0
-@test taylor(asin(x), x, 0:7) - sum(factorial(2*n)/(4^n*factorial(n)^2*(2*n+1)) * x^(2*n+1) for n in 0:3) == 0
-@test taylor(acos(x), x, 0:7) - (π/2 - taylor(asin(x), x, 0:7)) == 0 # TODO: make π/2 a proper fraction (like Num(π)/2)
-@test taylor(atan(x), x, 0:7) - taylor(asin(x/√(1+x^2)), x, 0:7) == 0
+@test expand(taylor(sin(x), x, 0:7) - sum((-1)^n/factorial(2*n+1) * x^(2*n+1) for n in 0:3)) == 0
+@test expand(taylor(cos(x), x, 0:7) - sum((-1)^n/factorial(2*n) * x^(2*n) for n in 0:3)) == 0
+@test expand(taylor(tan(x), x, 0:7) - taylor(taylor(sin(x), x, 0:7) / taylor(cos(x), x, 0:7), x, 0:7)) == 0
+@test expand(taylor(asin(x), x, 0:7) - sum(factorial(2*n)/(4^n*factorial(n)^2*(2*n+1)) * x^(2*n+1) for n in 0:3)) == 0
+@test expand(taylor(acos(x), x, 0:7) - (π/2 - taylor(asin(x), x, 0:7))) == 0 # TODO: make π/2 a proper fraction (like Num(π)/2)
+@test expand(taylor(atan(x), x, 0:7) - taylor(asin(x/√(1+x^2)), x, 0:7)) == 0
 
-@test taylor(sinh(x), x, 0:7) - sum(1/factorial(2*n+1) * x^(2*n+1) for n in 0:3) == 0
-@test taylor(cosh(x), x, 0:7) - sum(1/factorial(2*n) * x^(2*n) for n in 0:3) == 0
-@test taylor(tanh(x), x, 0:7) - (x - x^3/3 + 2/15*x^5 - 17/315*x^7) == 0
+@test expand(taylor(sinh(x), x, 0:7) - sum(1/factorial(2*n+1) * x^(2*n+1) for n in 0:3)) == 0
+@test expand(taylor(cosh(x), x, 0:7) - sum(1/factorial(2*n) * x^(2*n) for n in 0:3)) == 0
+@test expand(taylor(tanh(x), x, 0:7) - (x - x^3/3 + 2/15*x^5 - 17/315*x^7)) == 0
 
 # around x ≠ 0
 @test substitute(taylor(√(x), x, 1, 0:6), x => x + 1) - taylor(√(1+x), x, 0:6) == 0

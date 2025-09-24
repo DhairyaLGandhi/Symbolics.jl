@@ -14,13 +14,13 @@ Dt = Symbolics.Differential(t)
 
 @test_broken isapprox(solve_linear_ode_system([-1 -2; 2 -1], [1, -1], t), [exp(-t)*(cos(2t) + sin(2t)), exp(-t)*(sin(2t) - cos(2t))]) # can't handle complex eigenvalues (though it should be able to)
 
-@test isapprox(solve_linear_ode_system([1 -1 0; 1 2 1; -2 1 -1], [7, 2, 3], t), (5//3)*exp(-t)*[-1, -2, 7] - 14exp(t)*[-1, 0, 1] + (16//3)*exp(2t)*[-1, 1, 1])
+@test isapprox(expand.(solve_linear_ode_system([1 -1 0; 1 2 1; -2 1 -1], [7, 2, 3], t)), (5//3)*exp(-t)*[-1, -2, 7] - 14exp(t)*[-1, 0, 1] + (16//3)*exp(2t)*[-1, 1, 1])
 
 @test isequal(solve_linear_ode_system([1 0; 0 -1], [1, -1], t), [exp(t), -exp(-t)])
 @test isequal(solve_linear_ode_system([-3 4; -2 3], [7, 2], t), [10exp(-t) - 3exp(t), 5exp(-t) - 3exp(t)])
 @test isapprox(solve_linear_ode_system([4 -3; 8 -6], [7, 2], t), [18 - 11exp(-2t), 24 - 22exp(-2t)])
 
-@test isequal(solve_linear_ode_system([1 -1 0; 1 2 1; -2 1 -1], [7, 2, 3], t), (5//3)*exp(-t)*[-1, -2, 7] - 14exp(t)*[-1, 0, 1] + (16//3)*exp(2t)*[-1, 1, 1])
+@test isequal(expand.(solve_linear_ode_system([1 -1 0; 1 2 1; -2 1 -1], [7, 2, 3], t)), (5//3)*exp(-t)*[-1, -2, 7] - 14exp(t)*[-1, 0, 1] + (16//3)*exp(2t)*[-1, 1, 1])
 
 @test_throws ArgumentError solve_linear_ode_system([1 2; 3 4], [1, 2, 3], t) # mismatch between A and x0
 @test_throws ArgumentError solve_linear_ode_system([1 2 3; 4 5 6], [1, 2], t) # A isn't square

@@ -2,7 +2,14 @@
     val::BasicSymbolic{VartypeT}
 
     function Num(ex)
-        @assert symtype(ex) <: Real
+        # need `<: Number` instead of `<: Real` to allow the primitive `@number_methods`
+        # methods below to infer. They could be made to infer `Union{Complex{Num}, Num}`
+        # by manually checking the `symtype` of the result and branching instead of using
+        # `wrap`. However, this causes issues with LinearAlgebra methods because it
+        # preallocates a buffer using the inferred result type, and then tries to
+        # e.g. set an integer into it, which fails because `convert(::Type{Union{..}}, ::T)`
+        # doesn't work.
+        @assert symtype(ex) <: Number
         return new(Const{VartypeT}(ex))
     end
 end
@@ -22,7 +29,6 @@ const show_numwrap = Ref(false)
 
 Num(x::Num) = x # ideally this should never be called
 (n::Num)(args...) = Num(value(n)(map(value, args)...))
-value(x) = unwrap(x)
 
 SymbolicUtils.@number_methods(Num,
     Num(f(value(a))),
@@ -123,12 +129,14 @@ end
 
 Base.promote_rule(::Type{<:Number}, ::Type{<:Num}) = Num
 Base.promote_rule(::Type{BigFloat}, ::Type{<:Num}) = Num
-Base.promote_rule(::Type{<:BasicSymbolic}, ::Type{<:Num}) = Num
 <ₑ(s::Num, x) = value(s) <ₑ value(x)
 <ₑ(s, x::Num) = value(s) <ₑ value(x)
 <ₑ(s::Num, x::Num) = value(s) <ₑ value(x)
 
-Num(q::AbstractIrrational) = Num(Term(identity, [q]))
+function Num(q::AbstractIrrational)
+    args = SymbolicUtils.ArgsT{VartypeT}((q,))
+    Num(Term{VartypeT}(identity, args; type = Real, shape = SymbolicUtils.ShapeVecT()))
+end
 
 for T in (Integer, Rational)
     @eval Base.:(^)(n::Num, i::$T) = Num(value(n)^i)
@@ -237,7 +245,7 @@ end
 
 Base.to_index(x::Num) = Base.to_index(value(x))
 
-Base.hash(x::Num, h::UInt) = hash(value(x), h)::UInt
+Base.hash(x::Num, h::UInt) = hash(unwrap(x), h)::UInt
 
 function Base.convert(::Type{Num}, x::BasicSymbolic)
     symtype(x) <: Real || error("`symtype` must be `<:Real`")

@@ -14,6 +14,13 @@ function flatten_expr!(x)
     xs
 end
 
+"""
+    $(TYPEDSIGNATURES)
+
+Equivalent to `unwrap_const ∘ unwrap`.
+"""
+value(x) = unwrap_const(unwrap(x))
+
 function is_singleton(e)
     if iscall(e)
         op = operation(e)
@@ -23,6 +30,47 @@ function is_singleton(e)
     else
         return issym(e)
     end
+end
+
+"""
+    get_variables(e, varlist = nothing)
+
+Return a vector of variables appearing in e, optionally restricting to variables in varlist.
+
+Note that the returned variables are not wrapped in the Num type.
+
+Examples
+≡≡≡≡≡≡≡≡
+
+```julia
+julia> @variables t x y z(t);
+
+julia> Symbolics.get_variables(x + y + sin(z))
+3-element Vector{SymbolicUtils.BasicSymbolic}:
+ x
+ y
+ z(t)
+
+julia> Symbolics.get_variables(x - y)
+2-element Vector{SymbolicUtils.BasicSymbolic}:
+ x
+ y
+```
+"""
+function get_variables(e; kw...)
+    return search_variables(e; kw...)
+end
+
+function _get_is_atomic(varlist)
+    let vars = Set(varlist)
+        function _is_atomic(ex)
+            SymbolicUtils.default_is_atomic(ex) && ex in vars
+        end
+    end
+end
+
+function get_variables(e, varlist; kw...)
+    search_variables(e; kw..., is_atomic = _get_is_atomic(varlist))
 end
 
 """
@@ -258,14 +306,17 @@ julia> Symbolics.degree(x^2)
 function degree(p, sym=nothing)
     p = value(p)
     sym = value(sym)
-    if p isa Number
+    if SymbolicUtils.isconst(p) || p isa Number
         return 0
     end
     if isequal(p, sym)
         return 1
     end
     if isterm(p)
-        if sym === nothing
+        if operation(p) === (^)
+            base, exp = arguments(p)
+            return unwrap_const(exp) * degree(base, sym)
+        elseif sym === nothing
             return 1
         else
             return Int(isequal(p, sym))
@@ -274,8 +325,6 @@ function degree(p, sym=nothing)
         return sum(degree(k^v, sym) for (k, v) in zip(keys(p.dict), values(p.dict)))
     elseif isadd(p)
         return maximum(degree(key, sym) for key in keys(p.dict))
-    elseif ispow(p)
-        return p.exp * degree(p.base, sym)
     elseif isdiv(p)
         return degree(p.num, sym) - degree(p.den, sym)
     elseif issym(p)
@@ -316,7 +365,7 @@ function coeff(p, sym=nothing)
     # if `sym` is a product, iteratively compute the coefficient w.r.t. each term in `sym`
     if iscall(value(sym)) && operation(value(sym)) === (*)
         for t in arguments(value(sym))
-            @assert !(t isa Number) "`coeff(p, sym)` does not allow `sym` containing numerical factors"
+            @assert !(t isa Number || SymbolicUtils.isconst(t)) "`coeff(p, sym)` does not allow `sym` containing numerical factors"
             p = coeff(p, t)
         end
         return p
@@ -324,13 +373,11 @@ function coeff(p, sym=nothing)
             
     p, sym = value(p), value(sym)
 
-    if isequal(sym, 1)
+    if _isone(sym)
         sym = nothing
     end
 
-    if issym(p) || isterm(p)
-        sym === nothing ? 0 : Int(isequal(p, sym))
-    elseif ispow(p)
+    if issym(p) || SymbolicUtils.isconst(p) || isterm(p)
         sym === nothing ? 0 : Int(isequal(p, sym))
     elseif isadd(p)
         if sym===nothing
@@ -366,6 +413,27 @@ const DP = DynamicPolynomials
 # extracting underlying polynomial and coefficient type from Polyforms
 underlyingpoly(x::Number) = x
 coefftype(x::Number) = typeof(x)
+coefftype(x::DP.Polynomial) = eltype(MP.coefficients(x))
+
+as_concrete_polynomial(x::Number) = x
+function as_concrete_polynomial(x::DP.Polynomial)
+    coeffs = MP.coefficients(x)
+    isconcretetype(eltype(coeffs)) && return x
+    T = typeof(coeffs[1])
+    for coeff in coeffs
+        T = promote_type(T, typeof(coeff))
+    end
+    poly_to_coefftype(T, x)
+end
+
+function as_concrete_polynomial(x::SymbolicUtils.PolyVarT)
+    mv = DP.MonomialVector{SymbolicUtils.PolyVarOrder, SymbolicUtils.MonomialOrder}([x], [Int[1]])
+    return DP.Polynomial(Int[1], mv)
+end
+
+function poly_to_coefftype(::Type{T}, x::DP.Polynomial) where {T}
+    DP.Polynomial(T.(MP.coefficients(x)), MP.monomials(x))
+end
 
 #=
 Converts an array of symbolic polynomials
@@ -383,13 +451,12 @@ function symbol_to_poly(sympolys::AbstractArray)
 
     poly_to_bs = Bijections.Bijection{SymbolicUtils.PolyVarT, BasicSymbolic{varT}}()
     bs_to_poly = Bijections.active_inv(poly_to_bs)
-    polyforms = Vector{SymbolicUtils.PolynomialT}(map(f -> SymbolicUtils.to_poly!(poly_to_bs, bs_to_poly, f), stdsympolys))
-
+    polyforms = map(f -> as_concrete_polynomial(SymbolicUtils.to_poly!(poly_to_bs, bs_to_poly, f)), stdsympolys)
     # Discover common coefficient type
     commontype = mapreduce(coefftype, promote_type, polyforms, init=Int)
     @assert commontype <: Union{Integer,Rational} "Only integer and rational coefficients are supported as input."
 
-    polynoms = polyforms
+    polynoms = map(Base.Fix1(poly_to_coefftype, commontype), polyforms)
 
     polynoms, poly_to_bs
 end
@@ -398,7 +465,7 @@ end
 Converts an array of AbstractPolynomialLike`s into an array of
 symbolic expressions mapping variables w.r.t pvar2sym
 =#
-function poly_to_symbol(polys, poly_to_bs, ::Type{T}) where {T}
+function poly_to_symbol(polys, poly_to_bs)
     map(Base.Fix1(SymbolicUtils.from_poly, poly_to_bs), polys)
 end
 
@@ -420,7 +487,7 @@ function symbolic_to_float end
 symbolic_to_float(x::Num) = symbolic_to_float(unwrap(x))
 symbolic_to_float(x::Number) = x
 function symbolic_to_float(x::SymbolicUtils.BasicSymbolic)
-    substitute(x,Dict())
+    unwrap_const(substitute(x,Dict()))
 end
 
 """
@@ -541,14 +608,14 @@ false
 function evaluate end
 
 function evaluate(eq::Equation, subs)
-    lhs = fast_substitute(eq.lhs, subs)
-    rhs = fast_substitute(eq.rhs, subs)
+    lhs = substitute(eq.lhs, subs)
+    rhs = substitute(eq.rhs, subs)
     return isequal(lhs, rhs)
 end
 
 function evaluate(ineq::Inequality, subs)
-    lhs = fast_substitute(ineq.lhs, subs)
-    rhs = fast_substitute(ineq.rhs, subs)
+    lhs = substitute(ineq.lhs, subs)
+    rhs = substitute(ineq.rhs, subs)
     if (ineq.relational_op == geq)
         return isless(rhs, lhs)
     elseif (ineq.relational_op == leq)

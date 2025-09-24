@@ -29,7 +29,7 @@ import TermInterface: maketerm, iscall, operation, arguments, metadata
 import SymbolicUtils: Term, Add, Mul, Sym, Div, BasicSymbolic, Const,
     FnType, @rule, Rewriters, substitute, symtype, shape, unwrap, unwrap_const,
     promote_symtype, isadd, ismul, ispow, isterm, issym, isdiv, BSImpl, scalarize,
-    Operator
+    Operator, _iszero, _isone, search_variables, search_variables!
 
 using SymbolicUtils.Code
 
@@ -108,13 +108,17 @@ sqrt(2)
 """
 substitute
 
-export Equation, ConstrainedEquation
+export Equation
 include("equations.jl")
 
 export Inequality, ≲, ≳
 include("inequality.jl")
 
 import Bijections, DynamicPolynomials
+import DynamicPolynomials as DP
+import MultivariatePolynomials as MP
+import MutableArithmetics as MA
+
 export tosymbol, terms, factors
 include("utils.jl")
 
@@ -142,10 +146,6 @@ export SymbolicsSparsityDetector
 
 include("adtypes.jl")
 
-export Difference, DiscreteUpdate
-
-include("difference.jl")
-
 export infimum, supremum
 include("domains.jl")
 
@@ -170,7 +170,6 @@ import Libdl
 include("build_function.jl")
 export build_function
 
-import Distributions
 include("extra_functions.jl")
 
 using Latexify

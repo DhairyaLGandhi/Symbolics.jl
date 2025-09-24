@@ -56,13 +56,7 @@ end
 Base.show(io::IO, ::MIME"text/plain", arr::Arr) = show(io, arr)
 
 ################# Base array functions
-geteltype(s::BasicSymbolic) = geteltype(symtype(s))
-geteltype(::Type{<:AbstractArray{T}}) where {T} = T
-geteltype(::Type{<:AbstractArray}) = Unknown()
-
-ndims(::Type{<:Arr{<:Any, N}}) where N = N
-
-Base.eltype(A::Arr) = geteltype(unwrap(A))
+Base.IndexStyle(::Type{<:Arr}) = Base.IndexStyle(BasicSymbolic{VartypeT})
 Base.length(A::Arr) = length(unwrap(A))
 Base.size(A::Arr) = size(unwrap(A))
 Base.axes(A::Arr) = axes(unwrap(A))
@@ -77,6 +71,10 @@ end
 for (T1, T2) in [
     (Arr{<:Any, 2}, Arr{<:Any, 1}),
     (Arr{<:Any, 2}, Arr{<:Any, 2}),
+    (AbstractArray{<:Any, 2}, Arr{<:Any, 1}),
+    (AbstractArray{<:Any, 2}, Arr{<:Any, 2}),
+    (Arr{<:Any, 2}, AbstractArray{<:Any, 1}),
+    (Arr{<:Any, 2}, AbstractArray{<:Any, 2}),
     (Arr{<:Any, 2}, BasicSymbolic{SymReal}),
     (Arr{<:Any, 2}, BasicSymbolic{SafeReal}),
     (Arr{<:Any, 2}, BasicSymbolic{TreeReal}),
@@ -123,7 +121,7 @@ end
 
 function inplace_expr(x, out_array, intermediates = nothing)
     x = unwrap(x)
-    if SymbolicUtils.isarrayop(x)
+    if SymbolicUtils.isarrayop(x) && x.term === nothing
         return x
     elseif symtype(x) <: Number
         return term(broadcast_assign!, out_array, x)
@@ -150,7 +148,7 @@ function inplace_builtin(term, outsym)
 end
 
 hasnode(r::Function, y::Arr) = _hasnode(r, y)
-hasnode(r::Union{Num, BasicSymbolic, Arr}, y::Arr) = occursin(unwrap(r), unwrap(y))
+hasnode(r::Union{Num, BasicSymbolic, Arr}, y::Union{Arr, BasicSymbolic}) = occursin(unwrap(r), unwrap(y))
 
 #=
 """

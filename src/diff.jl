@@ -184,8 +184,6 @@ function _recursive_hasoperator(op, O)
     else
         if isadd(O) || ismul(O)
             any(_recursive_hasoperator(op), keys(O.dict))
-        elseif ispow(O)
-            _recursive_hasoperator(op)(O.base) || _recursive_hasoperator(op)(O.exp)
         elseif isdiv(O)
             _recursive_hasoperator(op)(O.num) || _recursive_hasoperator(op)(O.den)
         else
@@ -218,6 +216,13 @@ function Base.showerror(io::IO, err::DerivativeNotDefinedError)
         "[Adding Analytical Derivatives](@ref)" section of the docs for further information.
         """)
     show(io, MIME"text/plain"(), err_str)
+end
+
+function symdiff_substitute_filter(ex::BasicSymbolic{T}) where {T}
+    SymbolicUtils.default_substitute_filter(ex) || @match ex begin
+        BSImpl.Term(; f) && if f isa Differential end => true
+        _ => false
+    end
 end
 
 """
@@ -296,12 +301,12 @@ function executediff(D, arg, simplify=false; throw_no_derivative=false)
             c = 0
             inner_function = arguments(arg)[1]
             if iscall(a) || isequal(a, D.x)
-                t1 = SymbolicUtils.substitute(inner_function, Dict(op.domain.variables => a))
+                t1 = SymbolicUtils.substitute(inner_function, Dict(op.domain.variables => a); filterer = symdiff_substitute_filter)
                 t2 = executediff(D, a, simplify; throw_no_derivative)
                 c -= t1*t2
             end
             if iscall(b) || isequal(b, D.x)
-                t1 = SymbolicUtils.substitute(inner_function, Dict(op.domain.variables => b))
+                t1 = SymbolicUtils.substitute(inner_function, Dict(op.domain.variables => b); filterer = symdiff_substitute_filter)
                 t2 = executediff(D, b, simplify; throw_no_derivative)
                 c += t1*t2
             end
@@ -415,9 +420,6 @@ function expand_derivatives(n::Complex{Num}, simplify=false; kwargs...)
     Complex{Num}(wrap(re), wrap(img))
 end
 expand_derivatives(x, simplify=false; kwargs...) = x
-
-_iszero(x) = false
-_isone(x) = false
 
 # Don't specialize on the function here
 """
@@ -820,48 +822,48 @@ end
 
 hessian(O, vars::Arr; kwargs...) = hessian(O, collect(vars); kwargs...) 
 
-isidx(x) = x isa TermCombination
+isidx(x) = unwrap_const(x) isa TermCombination
 
-basic_mkterm(t, g, args, m) = metadata(Term{Any}(g, args), m)
+basic_mkterm(t, g, args, m) = metadata(Term{VartypeT}(g, args; type = Any), m)
 
 const _scalar = one(TermCombination)
 
-const linearity_rules = [
-      @rule +(~~xs) => reduce(+, filter(isidx, ~~xs), init=_scalar)
-      @rule *(~~xs) => reduce(*, filter(isidx, ~~xs), init=_scalar)
+const linearity_rules = (
+      (@rule +(~~xs) => reduce(+, filter(isidx, ~~xs), init=_scalar)),
+      (@rule *(~~xs) => reduce(*, filter(isidx, ~~xs), init=_scalar)),
 
-      @rule (~f)(~x) => isidx(~x) ? combine_terms_1(linearity_1(~f), ~x) : _scalar
-      @rule (^)(~x::isidx, ~y) => ~y isa Number && isone(~y) ? ~x : (~x) * (~x)
-      @rule (~f)(~x, ~y) => combine_terms_2(linearity_2(~f), isidx(~x) ? ~x : _scalar, isidx(~y) ? ~y : _scalar)
+      (@rule (~f)(~x) => isidx(~x) ? combine_terms_1(linearity_1(~f), ~x) : _scalar),
+      (@rule (^)(~x::isidx, ~y) => ~y isa Number && isone(~y) ? ~x : (~x) * (~x)),
+      (@rule (~f)(~x, ~y) => combine_terms_2(linearity_2(~f), isidx(~x) ? ~x : _scalar, isidx(~y) ? ~y : _scalar)),
 
-      @rule ~x::issym => 0
+      (@rule ~x::issym => 0),
 
       # `ifelse(cond, x, y)` can be written as cond * x + (1 - cond) * y
       # where condition `cond` is considered constant in differentiation
-      @rule ifelse(~cond, ~x, ~y) => (isidx(~x) ? ~x : _scalar) + (isidx(~y) ? ~y : _scalar)
+      (@rule ifelse(~cond, ~x, ~y) => (isidx(~x) ? ~x : _scalar) + (isidx(~y) ? ~y : _scalar)),
 
       # Fallback: Unknown functions with arbitrary number of arguments have non-zero partial derivatives
       # Functions with 1 and 2 arguments are already handled above
-      @rule (~f)(~~xs) => reduce(+, filter(isidx, ~~xs); init=_scalar)^2
-]
-const linearity_rules_affine = [
-      @rule +(~~xs) => reduce(+, filter(isidx, ~~xs), init=_scalar)
-      @rule *(~~xs) => reduce(*, filter(isidx, ~~xs), init=_scalar)
+      (@rule (~f)(~~xs) => reduce(+, filter(isidx, ~~xs); init=_scalar)^2),
+)
+const linearity_rules_affine = (
+      (@rule +(~~xs) => reduce(+, filter(isidx, ~~xs), init=_scalar)),
+      (@rule *(~~xs) => reduce(*, filter(isidx, ~~xs), init=_scalar)),
 
-      @rule (~f)(~x) => isidx(~x) ? combine_terms_1(linearity_1(~f), ~x) : _scalar
-      @rule (^)(~x::isidx, ~y) => ~y isa Number && isone(~y) ? ~x : (~x) * (~x)
-      @rule (~f)(~x, ~y) => combine_terms_2(linearity_2(~f), isidx(~x) ? ~x : _scalar, isidx(~y) ? ~y : _scalar)
+      (@rule (~f)(~x) => isidx(~x) ? combine_terms_1(linearity_1(~f), ~x) : _scalar),
+      (@rule (^)(~x::isidx, ~y) => ~y isa Number && isone(~y) ? ~x : (~x) * (~x)),
+      (@rule (~f)(~x, ~y) => combine_terms_2(linearity_2(~f), isidx(~x) ? ~x : _scalar, isidx(~y) ? ~y : _scalar)),
 
-      @rule ~x::issym => 0
+      (@rule ~x::issym => 0),
       # if the condition is dependent on the variable, do not consider this as affine
-      @rule ifelse(~cond::isidx, ~x, ~y) => (~cond)^2
+      (@rule ifelse(~cond::isidx, ~x, ~y) => (~cond)^2),
       # `ifelse(cond, x, y)` can be written as cond * x + (1 - cond) * y
       # where condition `cond` is considered constant in differentiation
-      @rule ifelse(~cond::(!isidx), ~x, ~y) => (isidx(~x) ? ~x : _scalar) + (isidx(~y) ? ~y : _scalar)
+      (@rule ifelse(~cond::(!isidx), ~x, ~y) => (isidx(~x) ? ~x : _scalar) + (isidx(~y) ? ~y : _scalar)),
       # Fallback: Unknown functions with arbitrary number of arguments have non-zero partial derivatives
       # Functions with 1 and 2 arguments are already handled above
-      @rule (~f)(~~xs) => reduce(+, filter(isidx, ~~xs); init=_scalar)^2
-]
+      (@rule (~f)(~~xs) => reduce(+, filter(isidx, ~~xs); init=_scalar)^2),
+)
 const linearity_propagator = Fixpoint(Postwalk(Chain(linearity_rules); maketerm=basic_mkterm))
 const affine_linearity_propagator = Fixpoint(Postwalk(Chain(linearity_rules_affine); maketerm=basic_mkterm))
 
@@ -895,7 +897,7 @@ function hessian_sparsity(expr, vars::AbstractVector; full::Bool=true, linearity
     u = map(value, vars)
     dict = Dict(ui => TermCombination(Set([Dict(i=>1)])) for (i, ui) in enumerate(u))
     f = Rewriters.Prewalk(x-> get(dict, x, x); maketerm=basic_mkterm)(expr)
-    lp = linearity_propagator(f)
+    lp = unwrap_const(linearity_propagator(f))
     S = _sparse(lp, length(u))
     S = full ? S : tril(S)
 end

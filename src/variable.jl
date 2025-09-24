@@ -95,36 +95,16 @@ function parse_vars(macroname, type, x, transform = identity)
             default = esc(default)
         end
         parse_result = SymbolicUtils.parse_variable(var_expr; default_type = type)
-
+        handle_nonconcrete_symtype!(parse_result)
         sym = SymbolicUtils.sym_from_parse_result(parse_result, VartypeT)
-
-        # is a function call and the function doesn't have a type and all arguments
-        # are named
-        if parse_result_is_dependent_variable(parse_result)
-            args = parse_result[:args]
-            argnames = Any[get(arg, :name, nothing) for arg in args]
-            # if the last arg is a `Vararg`, splat it
-            if !isempty(args) && Meta.isexpr(args[end][:type], :curly) && args[end][:type].args[1] == :Vararg
-                argnames[end] = Expr(:..., argnames[end])
-            end
-            # Turn the result into something of the form `@variables x(..)`.
-            # This makes it so that the `FnType` is recognized as a dependent variable
-            # according to `SymbolicUtils.is_function_symtype`
-            parse_result[:args] = [SymbolicUtils.parse_variable(:(..); default_type = type)]
-            parse_result[:type].args[2] = Tuple
-            # Re-create the `Sym`
-            sym = SymbolicUtils.sym_from_parse_result(parse_result, VartypeT)
-            # Call the `Sym` with the arguments to create a dependent variable.
-            map!(esc, argnames, argnames)
-            sym = Expr(:call, sym)
-            append!(sym.args, argnames)
-        end
+        sym = handle_maybe_dependent_variable!(parse_result, sym, type)
 
         if options === nothing && cursor < length(x) && isoption(x[cursor + 1])
             options = x[cursor + 1].args
             cursor += 1
         end
         sym = _add_metadata(parse_result, sym, default, macroname, options)
+        sym = handle_maybe_callandwrap!(parse_result, sym)
         sym = Expr(:call, wrap, sym)
 
         if parse_result[:isruntime]
@@ -139,6 +119,34 @@ function parse_vars(macroname, type, x, transform = identity)
     return ex
 end
 
+function handle_nonconcrete_symtype!(parse_result)
+    type = parse_result[:type]
+    if type == :Complex
+        parse_result[:type] = :(Complex{Real})
+    end
+    if Meta.isexpr(type, :curly)
+        if type.args[1] in (:Array, :Vector, :Matrix, Array, Vector, Matrix) && type.args[2] == :Complex
+            type.args[2] = :(Complex{Real})
+        end
+        if type.args[1] == :FnType || type.args[1] == SymbolicUtils.FnType
+            if Meta.isexpr(type.args[2], :curly) # Tuple{...}
+                for i in 2:length(type.args[2].args)
+                    if type.args[2].args[i] == :Complex
+                        type.args[2].args[i] = :(Complex{Real})
+                    end
+                end
+            end
+            if type.args[3] == :Complex
+                type.args[3] = :(Complex{Real})
+            end
+            for parse_arg in parse_result[:args]
+                handle_nonconcrete_symtype!(parse_arg)
+            end
+        end
+    end
+    return nothing
+end
+
 function parse_result_is_dependent_variable(parse_result)
     # This means it is a function call
     return haskey(parse_result, :args) &&
@@ -147,6 +155,41 @@ function parse_result_is_dependent_variable(parse_result)
     # This ensures all arguments have defined names
         all(n -> n !== nothing && n != :..,
             (get(arg, :name, nothing) for arg in parse_result[:args]))
+end
+
+function handle_maybe_dependent_variable!(parse_result, sym, type)
+    # is a function call and the function doesn't have a type and all arguments
+    # are named
+    parse_result_is_dependent_variable(parse_result) || return sym
+
+    args = parse_result[:args]
+    argnames = Any[get(arg, :name, nothing) for arg in args]
+    # if the last arg is a `Vararg`, splat it
+    if !isempty(args) && Meta.isexpr(args[end][:type], :curly) && args[end][:type].args[1] == :Vararg
+        argnames[end] = Expr(:..., argnames[end])
+    end
+    # Turn the result into something of the form `@variables x(..)`.
+    # This makes it so that the `FnType` is recognized as a dependent variable
+    # according to `SymbolicUtils.is_function_symtype`
+    parse_result[:args] = [SymbolicUtils.parse_variable(:(..); default_type = type)]
+    parse_result[:type].args[2] = Tuple
+    # Re-create the `Sym`
+    sym = SymbolicUtils.sym_from_parse_result(parse_result, VartypeT)
+    # Change the type
+    parse_result[:type] = parse_result[:type].args[3]
+    # Call the `Sym` with the arguments to create a dependent variable.
+    map!(esc, argnames, argnames)
+    sym = Expr(:call, sym)
+    append!(sym.args, argnames)
+    return sym
+end
+
+function handle_maybe_callandwrap!(parse_result, sym)
+    type = parse_result[:type]
+    if Meta.isexpr(type, :curly) && (type.args[1] == :FnType || type.args[1] === SymbolicUtils.FnType)
+        sym = Expr(:call, CallAndWrap, sym)
+    end
+    return sym
 end
 
 function _add_metadata(parse_result, var::Expr, default, macroname::Symbol, metadata::Union{Nothing, Vector{Any}})
@@ -316,6 +359,15 @@ function _recursive_unwrap(val::AbstractSparseArray)
     end
 end
 
+struct FPSubFilterer{O} end
+
+function (::FPSubFilterer{O})(ex::BasicSymbolic{T}) where {T, O}
+    SymbolicUtils.default_substitute_filter(ex) && @match ex begin
+        BSImpl.Term(; f) => !(f isa O)
+        _ => true
+    end
+end
+
 """
     fixpoint_sub(expr, dict; operator = Nothing, maxiters = 1000)
 
@@ -327,16 +379,14 @@ specified to prevent substitution of expressions inside operators of the given t
 `maxiters` keyword is used to limit the number of times the substitution can occur to avoid
 infinite loops in cases where the substitutions in `dict` are circular
 (e.g. `[x => y, y => x]`).
-
-See also: [`fast_substitute`](@ref).
 """
 function fixpoint_sub(x, dict; operator = Nothing, maxiters = 1000)
     dict = subrules_to_dict(dict)
-    y = fast_substitute(x, dict; operator)
+    y = substitute(x, dict; filterer=FPSubFilterer{operator}())
     iters = maxiters
     while !isequal(x, y) && iters > 0
         y = x
-        x = fast_substitute(y, dict; operator)
+        x = substitute(y, dict; filterer=FPSubFilterer{operator}())
         iters -= 1
     end
 
@@ -351,106 +401,6 @@ function fixpoint_sub(x::SparseMatrixCSC, dict; operator = Nothing, maxiters = 1
     V = fixpoint_sub(V, dict; operator, maxiters)
     m, n = size(x)
     return sparse(I, J, V, m, n)
-end
-
-const Eq = Union{Equation, Inequality}
-"""
-    fast_substitute(expr, dict; operator = Nothing)
-
-Given a symbolic expression, equation or inequality `expr` perform the substitutions in
-`dict`. This only performs the substitutions once. For example,
-`fast_substitute(x, Dict(x => y, y => 3))` will return `y`. The `operator` keyword can be
-specified to prevent substitution of expressions inside operators of the given type.
-
-See also: [`fixpoint_sub`](@ref).
-"""
-function fast_substitute(eq::Eq, subs; operator = Nothing)
-    if eq isa Inequality
-        Inequality(fast_substitute(eq.lhs, subs; operator),
-            fast_substitute(eq.rhs, subs; operator),
-            eq.relational_op)
-    else
-        Equation(fast_substitute(eq.lhs, subs; operator),
-            fast_substitute(eq.rhs, subs; operator))
-    end
-end
-function fast_substitute(eq::T, subs::Pair; operator = Nothing) where {T <: Eq}
-    T(fast_substitute(eq.lhs, subs; operator), fast_substitute(eq.rhs, subs; operator))
-end
-function fast_substitute(eqs::AbstractArray, subs; operator = Nothing)
-    fast_substitute.(eqs, (subs,); operator)
-end
-function fast_substitute(eqs::AbstractArray, subs::Pair; operator = Nothing)
-    fast_substitute.(eqs, (subs,); operator)
-end
-function fast_substitute(eqs::SparseMatrixCSC, subs; operator = Nothing)
-    I, J, V = findnz(eqs)
-    V = fast_substitute(V, subs; operator)
-    m, n = size(eqs)
-    return sparse(I, J, V, m, n)
-end
-for (exprType, subsType) in Iterators.product((Num, Symbolics.Arr), (Any, Pair))
-    @eval function fast_substitute(expr::$exprType, subs::$subsType; operator = Nothing)
-        fast_substitute(value(expr), subs; operator)
-    end
-end
-function fast_substitute(expr, subs; operator = Nothing)
-    if (_val = get(subs, expr, nothing)) !== nothing
-        return _val
-    end
-    iscall(expr) || return expr
-    op = fast_substitute(operation(expr), subs; operator)
-    args = SymbolicUtils.arguments(expr)
-    if !(op isa operator)
-        canfold = Ref(!(op isa BasicSymbolic))
-        args = let canfold = canfold
-            map(args) do x
-                symbolic_type(x) == NotSymbolic() && !is_array_of_symbolics(x) && return x
-                x′ = fast_substitute(x, subs; operator)
-                canfold[] = canfold[] && (symbolic_type(x′) == NotSymbolic() && !is_array_of_symbolics(x′))
-                x′
-            end
-        end
-        if op === getindex && symbolic_type(args[1]) == NotSymbolic()
-            canfold[] = true
-        end
-        canfold[] && return op(args...)
-    end
-    maketerm(typeof(expr),
-        op,
-        args,
-        metadata(expr))
-end
-function fast_substitute(expr, pair::Pair; operator = Nothing)
-    a, b = pair
-    isequal(expr, a) && return b
-    if a isa AbstractArray
-        for (ai, bi) in zip(a, b)
-            expr = fast_substitute(expr, ai => bi; operator)
-        end
-    end
-    iscall(expr) || return expr
-    op = fast_substitute(operation(expr), pair; operator)
-    args = SymbolicUtils.arguments(expr)
-    if !(op isa operator)
-        canfold = Ref(!(op isa BasicSymbolic))
-        args = let canfold = canfold
-            map(args) do x
-                symbolic_type(x) == NotSymbolic() && !is_array_of_symbolics(x) && return x
-                x′ = fast_substitute(x, pair; operator)
-                canfold[] = canfold[] && (symbolic_type(x′) == NotSymbolic() && !is_array_of_symbolics(x′))
-                x′
-            end
-        end
-        if op === getindex && symbolic_type(args[1]) == NotSymbolic()
-            canfold[] = true
-        end
-        canfold[] && return op(args...)
-    end
-    maketerm(typeof(expr),
-        op,
-        args,
-        metadata(expr))
 end
 
 function is_array_of_symbolics(x)
@@ -585,3 +535,45 @@ function rename(x::BasicSymbolic{T}, newname::Symbol) where {T}
         _ => error("Cannot rename $x.")
     end
 end
+
+#### Callable ###
+
+struct CallAndWrap{T}
+    f::BasicSymbolic{VartypeT}
+end
+
+rettype_from_fntype(::Type{T}) where {A, R, T <: SymbolicUtils.FnType{A, R}} = R
+
+function CallAndWrap(f::BasicSymbolic{VartypeT})
+    @assert symtype(f) <: SymbolicUtils.FnType
+    R = rettype_from_fntype(symtype(f))
+    if hasmethod(wrapper_type, Tuple{Type{R}})
+        CallAndWrap{wrapper_type(R)}(f)
+    else
+        f
+    end
+end
+
+function (caw::CallAndWrap{T})(args...) where {T}
+    T(caw.f(args...))
+end
+
+SymbolicIndexingInterface.symbolic_type(::Type{<:CallAndWrap}) = ScalarSymbolic()
+
+Base.isequal(a::CallAndWrap, b::CallAndWrap) = isequal(a.f,  b.f)
+Base.isequal(a::BasicSymbolic{VartypeT}, b::CallAndWrap) = isequal(a,  b.f)
+Base.isequal(a::CallAndWrap, b::BasicSymbolic{VartypeT}) = isequal(a.f,  b)
+Base.hash(x::CallAndWrap, h::UInt) = hash(x.f, h)
+
+function Base.show(io::IO, caw::CallAndWrap)
+    show(io, caw.f)
+    print(io, "⋆")
+end
+
+has_symwrapper(::Type{T}) where {A, R, T <: SymbolicUtils.FnType{A, R}} = has_symwrapper(R)
+wrapper_type(::Type{T}) where {A, R, T <: SymbolicUtils.FnType{A, R}} = CallAndWrap{wrapper_type(R)}
+is_wrapper_type(::Type{T}) where {T <: CallAndWrap} = true
+wraps_type(::Type{T}) where {W, T <: CallAndWrap{W}} = FnType{A, R} where {A, R <: wraps_type(W)}
+iswrapped(::CallAndWrap) = true
+SymbolicUtils.unwrap(x::CallAndWrap) = x.f
+

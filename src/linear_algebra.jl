@@ -332,9 +332,9 @@ function _linear_expansion(t, x)
     elseif op === getindex
         arrt, idxst... = arguments(t)
         isequal(arrt, arrx) && return (0, t, true)
-        shape(arrt) == Unknown() && return (0, t, true)
+        shape(arrt) isa SymbolicUtils.Unknown && return (0, t, true)
 
-        indexed_t = OffsetArrays.Origin(map(first, axes(arrt)))(Symbolics.scalarize(arrt))[idxst...]
+        indexed_t = OffsetArrays.Origin(map(first, axes(arrt)))(Symbolics.scalarize(arrt))[unwrap_const.(idxst)...]
         # when indexing a registered function/callable symbolic
         # scalarizing and indexing leads to the same symbolic variable
         # which causes a StackOverflowError without this
@@ -388,7 +388,6 @@ end
 ###
 
 # Pretty much just copy-pasted from stdlib
-SparseArrays.SparseMatrixCSC{Tv,Ti}(M::StridedMatrix) where {Tv<:RCNum,Ti} = _sparse(Tv,  Ti, M)
 function _sparse(::Type{Tv}, ::Type{Ti}, M) where {Tv, Ti}
     nz = count(!_iszero, M)
     colptr = zeros(Ti, size(M, 2) + 1)

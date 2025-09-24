@@ -121,6 +121,9 @@ function _build_function(target::JuliaTarget, op, args...;
                          nanmath = true,
                          kwargs...)
     op = _recursive_unwrap(op)
+    if symtype(op) <: AbstractArray
+        return _build_function(target, wrap(op), args...; conv, expression, expression_module, checkbounds, states, linenumbers, cse, nanmath, kwargs...)
+    end
     states.rewrites[:nanmath] = nanmath
     dargs = map((x) -> destructure_arg(x[2], !checkbounds, default_arg_name(x[1])), enumerate(collect(args)))
     fun = Func(dargs, [], op)
@@ -148,7 +151,7 @@ end
 
 SymbolicUtils.Code.get_rewrites(x::Arr) = SymbolicUtils.Code.get_rewrites(unwrap(x))
 
-function _build_function(target::JuliaTarget, op::Union{Arr, SymbolicUtils.BasicSymbolic{<:AbstractArray}}, args...;
+function _build_function(target::JuliaTarget, op::Arr, args...;
                          conv = toexpr,
                          expression = Val{true},
                          expression_module = @__MODULE__(),
@@ -176,6 +179,7 @@ function _build_function(target::JuliaTarget, op::Union{Arr, SymbolicUtils.Basic
         end
         body = inplace_expr(op, outsym)
         iip_expr = wrap_code[2](Func(vcat(outsym, dargs), [], body))
+        delete!(states.rewrites, :arrayop_output)
     else
         iip_expr = get_unimplemented_expr([outsym; dargs])
     end
@@ -340,7 +344,7 @@ function _build_function(target::JuliaTarget, rhss::AbstractArray, args...;
 
 
     if iip
-        out = Sym{Any}(DEFAULT_OUTSYM)
+        out = Sym{VartypeT}(DEFAULT_OUTSYM; type = Any, shape = SymbolicUtils.Unknown(-1))
         iip_expr = Func(vcat(out, dargs), [], postprocess_fbody(set_array(parallel,
                                     dargs,
                                     out,
@@ -609,6 +613,7 @@ function numbered_expr(O::BasicSymbolic,varnumbercache,args...;varordering = arg
                        states = LazyState(),
                        lhsname=:du,rhsnames=[Symbol("MTK$i") for i in 1:length(args)])
     O = value(O)
+    O isa BasicSymbolic || return O
     if (issym(O) || issym(operation(O))) || (iscall(O) && operation(O) == getindex)
         (j,i) = get(varnumbercache, O, (nothing, nothing))
         if !isnothing(j)

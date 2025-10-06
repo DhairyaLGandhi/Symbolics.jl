@@ -119,10 +119,11 @@ function _build_function(target::JuliaTarget, op, args...;
                          wrap_code = nothing,
                          cse = false,
                          nanmath = true,
+                         array = false,
                          kwargs...)
     op = _recursive_unwrap(op)
     if symtype(op) <: AbstractArray
-        return _build_function(target, wrap(op), args...; conv, expression, expression_module, checkbounds, states, linenumbers, cse, nanmath, kwargs...)
+        return _build_function(target, wrap(op), args...; array, conv, expression, expression_module, checkbounds, states, linenumbers, cse, nanmath, kwargs...)
     end
     states.rewrites[:nanmath] = nanmath
     dargs = map((x) -> destructure_arg(x[2], !checkbounds, default_arg_name(x[1])), enumerate(collect(args)))
@@ -130,8 +131,15 @@ function _build_function(target::JuliaTarget, op, args...;
     if wrap_code !== nothing
         fun = wrap_code(fun)
     end
+    cse_state = CSEState()
     if cse
-        fun = Code.cse(fun)
+        newexpr = cse!(fun.body, cse_state)
+        newexpr = apply_cse(newexpr, cse_state)
+        fun = Func(dargs, [], fun.body)
+    end
+    if array
+        new_body = Code.mul5_cse2(fun.body, cse_state)
+        fun = Func(dargs, [], new_body)
     end
     expr = conv(fun, states)
     if !checkbounds
@@ -159,6 +167,7 @@ function _build_function(target::JuliaTarget, op::Arr, args...;
                          states = LazyState(),
                          linenumbers = true,
                          cse = false,
+                         array = false,
                          nanmath = true,
                          wrap_code = (identity, identity),
                          iip_config = (true, true),
@@ -187,6 +196,15 @@ function _build_function(target::JuliaTarget, op::Arr, args...;
     if cse
         oop_expr = Code.cse(oop_expr)
         iip_expr = Code.cse(iip_expr)
+    end
+
+    if array
+        if cse
+            body = Code.mul5_cse2(iip_expr.body, CSEState())
+            iip_expr = Func(iip_expr.args, iip_expr.kwargs, body, iip_expr.pre)
+        else
+            error(ArgumentError("The `array` option requires `cse=true`."))
+        end
     end
 
     oop_expr = conv(oop_expr, states)

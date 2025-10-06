@@ -35,7 +35,7 @@ using SymbolicUtils.Code
 
 import SymbolicUtils.Rewriters: Chain, Prewalk, Postwalk, Fixpoint
 
-import SymbolicUtils.Code: toexpr
+import SymbolicUtils.Code: toexpr, CSEState, cse!, apply_cse, Fun
 
 import ArrayInterface
 using RuntimeGeneratedFunctions

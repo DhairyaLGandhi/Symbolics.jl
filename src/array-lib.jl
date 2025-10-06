@@ -110,3 +110,14 @@ end
 
 SymbolicUtils.@map_methods Arr unwrap wrap
 SymbolicUtils.@mapreduce_methods Arr unwrap wrap
+
+
+@register_array_symbolic LinearAlgebra.mul!(x::AbstractArray, y::AbstractArray, z::AbstractArray, α, β) begin
+    size = size(x)
+    eltype = eltype(x)
+end
+@register_symbolic Base.copy(x)
+@register_array_symbolic Base.copy(x::AbstractArray) begin
+    size = size(x)
+    eltype = eltype(x)
+end
